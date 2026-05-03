@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+db/
+exports/
+.env
+app_settings.json
+*.tmp
+build/
+dist/
+*.spec
+d_files_before_content_classify.csv
