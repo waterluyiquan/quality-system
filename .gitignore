@@ -11,3 +11,4 @@ build/
 dist/
 *.spec
 d_files_before_content_classify.csv
+tmp_table_test/

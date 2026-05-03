@@ -13,6 +13,8 @@ from fill_form import batch_fill_folder, fill_excel, pending_excel_files, reset_
 from ingest import get_collection, ingest_folder
 from rag import answer_question, check_llm_connection, format_source, search
 from settings import ensure_folder, load_settings, save_settings
+from table_index import rebuild_table_index, search_table_index
+from table_render import render_xlsx_region
 
 
 app = FastAPI(title="Quality System Knowledge API", version="1.0")
@@ -65,6 +67,28 @@ class BatchFillPayload(BaseModel):
     max_fields_per_file: int = Field(30, ge=1, le=500)
     skip_done: bool = True
     background: bool = True
+
+
+class TableIndexPayload(BaseModel):
+    source_dir: str | None = None
+    db_dir: str | None = None
+    background: bool = True
+
+
+class TableSearchPayload(BaseModel):
+    q: str = Field(..., min_length=1)
+    limit: int = Field(20, ge=1, le=100)
+    context_rows: int = Field(2, ge=0, le=20)
+
+
+class TableShotPayload(BaseModel):
+    path: str
+    sheet: str
+    row_start: int = Field(..., ge=1)
+    row_end: int = Field(..., ge=1)
+    highlight_row: int | None = Field(None, ge=1)
+    col_start: int = Field(1, ge=1)
+    col_end: int | None = Field(None, ge=1)
 
 
 def current_settings() -> dict[str, str]:
@@ -162,6 +186,20 @@ def run_batch_fill(payload: BatchFillPayload, settings: dict[str, str]) -> None:
         finish_task(error=str(exc))
 
 
+def run_table_index(source_dir: str, db_dir: str) -> None:
+    try:
+        set_task("table_index", f"准备建立表格精确索引：{source_dir}", 1)
+
+        def on_progress(index: int, total: int, path: Path) -> None:
+            progress = int(index / total * 100) if total else 100
+            update_task(f"正在索引表格 {index}/{total}: {path.name}", progress)
+
+        rows = rebuild_table_index(source_dir, db_dir, progress_callback=on_progress)
+        finish_task({"rows": rows, "source_dir": source_dir, "db_dir": db_dir})
+    except Exception as exc:
+        finish_task(error=str(exc))
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     ok, message = check_llm_connection()
@@ -215,6 +253,51 @@ def query(payload: QueryPayload) -> dict[str, Any]:
 def semantic_search(payload: QueryPayload) -> dict[str, Any]:
     hits = search(payload.q, top_k=payload.top_k)
     return {"hits": hits}
+
+
+@app.post("/table-index")
+def table_index(payload: TableIndexPayload, background_tasks: BackgroundTasks) -> dict[str, Any]:
+    reject_if_running()
+    settings = current_settings()
+    source_dir = payload.source_dir or settings["source_dir"]
+    db_dir = payload.db_dir or settings["db_dir"]
+    if payload.background:
+        background_tasks.add_task(run_table_index, source_dir, db_dir)
+        return {"status": "started", "task": "table_index", "source_dir": source_dir, "db_dir": db_dir}
+    rows = rebuild_table_index(source_dir, db_dir)
+    return {"status": "done", "rows": rows, "source_dir": source_dir, "db_dir": db_dir}
+
+
+@app.post("/table-search")
+def table_search(payload: TableSearchPayload) -> dict[str, Any]:
+    settings = current_settings()
+    results = search_table_index(settings["db_dir"], payload.q, limit=payload.limit, context_rows=payload.context_rows)
+    return {"results": results, "count": len(results)}
+
+
+@app.post("/table-shot")
+def table_shot(payload: TableShotPayload) -> dict[str, Any]:
+    settings = current_settings()
+    file_path = Path(payload.path)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"文件不存在：{file_path}")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = ensure_folder(Path(settings["export_dir"]) / "screenshots")
+    output_path = output_dir / f"table_{timestamp}_{file_path.stem}_{payload.row_start}_{payload.row_end}.png"
+    try:
+        render_xlsx_region(
+            file_path,
+            payload.sheet,
+            payload.row_start,
+            payload.row_end,
+            output_path,
+            col_start=payload.col_start,
+            col_end=payload.col_end,
+            highlight_row=payload.highlight_row,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "done", "screenshot_path": str(output_path), "download_url": f"/download?path={output_path}"}
 
 
 @app.post("/ingest")

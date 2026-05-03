@@ -115,6 +115,64 @@ POST /batch-reset
 GET /download?path=E:/file/filled_xxx.xlsx
 ```
 
+## 表格精确检索与截图
+
+### 建立 SQLite 表格索引
+
+```http
+POST /table-index
+Content-Type: application/json
+
+{
+  "background": true
+}
+```
+
+进度：
+
+```http
+GET /status
+```
+
+### 关键词精确搜索
+
+```http
+POST /table-search
+Content-Type: application/json
+
+{
+  "q": "TO247 引脚沾污",
+  "limit": 10,
+  "context_rows": 2
+}
+```
+
+返回文件路径、Sheet、命中行、上下文行范围和行文本。
+
+### 生成表格截图
+
+```http
+POST /table-shot
+Content-Type: application/json
+
+{
+  "path": "D:/LanShareFiles/04_客户标准与判定标准/108客户判定标准.xlsx",
+  "sheet": "Sheet1",
+  "row_start": 49,
+  "row_end": 53,
+  "highlight_row": 51
+}
+```
+
+返回：
+
+```json
+{
+  "screenshot_path": "E:/file/screenshots/table_xxx.png",
+  "download_url": "/download?path=E:/file/screenshots/table_xxx.png"
+}
+```
+
 ## OpenClaw 建议工具映射
 
 - `quality_query` -> `POST /query`
